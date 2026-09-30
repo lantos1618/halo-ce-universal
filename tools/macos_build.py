@@ -75,6 +75,10 @@ NATIVE_ABI_FLAGS = [("-mcpu=apple-m1" if flag == "-mcpu=cortex-a53" else flag)
     "-Wno-incompatible-sysroot",
 ]
 
+# musl's portable memory functions the native guest replaces
+# (port/macos/guest/libc/string/memory_wide.c)
+NATIVE_WIDE_MEMORY_FUNCTIONS = ("memcpy", "memmove", "memset", "memcmp")
+
 # the x86-64 build: x32, linked below 2 GB (where x86-64 code can use
 # sign-extended 32-bit absolute addresses)
 X86_IMAGE_BASE = 0x20000000
@@ -419,7 +423,17 @@ def _generate_variant(n: Writer, sln: Any, config: Dict[str, Any], variant: str,
         f"-I{arch}", f"-I{MUSL_DIR}/arch/generic", f"-I{libc_internal}", *darwin_features,
         f"-I{MUSL_DIR}/src/include", f"-I{MUSL_DIR}/src/internal", f"-I{libc_include}", f"-I{MUSL_DIR}/include",
     ])
-    musl_objects = [guest_object(source, musl_cflags, "musl") for source in _musl_sources_in(MUSL_DIR)]
+    # the native guest's memcpy, memmove, memset and memcmp move 16 bytes a
+    # register rather than musl's 4 (or 1): every access of the rebased guest
+    # costs an extra instruction (port/macos/guest/libc/string/memory_wide.c)
+    musl_sources = _musl_sources_in(MUSL_DIR)
+    if native:
+        replaced = {f"{name}.c" for name in NATIVE_WIDE_MEMORY_FUNCTIONS}
+        musl_sources = [s for s in musl_sources if not (s.parent.name == "string" and s.name in replaced)]
+    musl_objects = [guest_object(source, musl_cflags, "musl") for source in musl_sources]
+    if native:
+        musl_objects.append(guest_object(PORT_DIR / "guest" / "libc" / "string" / "memory_wide.c", musl_cflags,
+                                         "musl"))
     libguestc = guest_dir / "libguestc.a"
     n.build(outputs=libguestc, rule="macos_ar", inputs=musl_objects)
 
