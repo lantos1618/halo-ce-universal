@@ -93,6 +93,44 @@ symbols in this file:
 
 /* ---------- macros */
 
+#if defined(HALO_MACOS) && defined(__ARM_NEON)
+/* The native macOS guest (Apple silicon) transforms by a matrix and
+multiplies matrices with NEON, a row of the matrix a register: each lane
+computes what the C below does for one of x, y and z - the same products,
+added in the same order, rounded to single precision each step, and never
+fused (-ffp-contract=off) - so the results are the C's bit for bit, as
+system link games need (port/macos/tests/math_determinism_test.c keeps its
+hashes; port/macos/tests/perf_bench.c compares against the C and times
+both). The guest is compiled without arm_neon.h (-nostdinc): these are the
+compiler's vector types, which it gives NEON's instructions. */
+#define MATRIX_MATH_NEON
+typedef float neon_real4 __attribute__((vector_size(16), aligned(4), may_alias));
+typedef float neon_real2 __attribute__((vector_size(8), aligned(4), may_alias));
+
+/* a matrix's four rows (forward, left, up and position), each in lanes 0 to
+2 of a register; lane 3 holds the next row's first element (or, for the
+position, the up vector's last), which nothing keeps */
+#define NEON_MATRIX_ROWS(elements, row0, row1, row2, row3) \
+	do \
+	{ \
+		neon_real4 row3_loaded; \
+		(row0) = *(neon_real4 const *)((elements) + 0); \
+		(row1) = *(neon_real4 const *)((elements) + 3); \
+		(row2) = *(neon_real4 const *)((elements) + 6); \
+		/* (the last element is the matrix's: no load past its end) */ \
+		row3_loaded = *(neon_real4 const *)((elements) + 8); \
+		(row3) = __builtin_shufflevector(row3_loaded, row3_loaded, 1, 2, 3, 0); \
+	} while (0)
+
+/* lanes 0 to 2 of a register into three reals */
+#define NEON_STORE3(destination, value) \
+	do \
+	{ \
+		*(neon_real2 *)(destination) = __builtin_shufflevector((value), (value), 0, 1); \
+		(destination)[2] = (value)[2]; \
+	} while (0)
+#endif
+
 
 
 /* ---------- structures */
@@ -775,6 +813,16 @@ real_point3d *matrix4x3_transform_point(
 		z *= matrix->scale;
 	}
 
+#ifdef MATRIX_MATH_NEON
+	{
+		neon_real4 forward, left, up, position, transformed;
+
+		NEON_MATRIX_ROWS(matrix->n[0], forward, left, up, position);
+		transformed = up*z + left*y + forward*x + position;
+		NEON_STORE3(&result->x, transformed);
+		return result;
+	}
+#endif
 	result->x = matrix->up.i*z + matrix->left.i*y + matrix->forward.i*x + matrix->position.x;
 	result->y = matrix->up.j*z + matrix->left.j*y + matrix->forward.j*x + matrix->position.y;
 	result->z = matrix->up.k*z + matrix->left.k*y + matrix->forward.k*x + matrix->position.z;
@@ -797,6 +845,17 @@ real_vector3d *matrix4x3_transform_vector(
 		k *= matrix->scale;
 	}
 
+#ifdef MATRIX_MATH_NEON
+	{
+		neon_real4 forward, left, up, position, transformed;
+
+		NEON_MATRIX_ROWS(matrix->n[0], forward, left, up, position);
+		(void)position;
+		transformed = i*forward + j*left + k*up;
+		NEON_STORE3(&result->i, transformed);
+		return result;
+	}
+#endif
 	result->i = i*matrix->forward.i + j*matrix->left.i + k*matrix->up.i;
 	result->j = i*matrix->forward.j + j*matrix->left.j + k*matrix->up.j;
 	result->k = i*matrix->forward.k + j*matrix->left.k + k*matrix->up.k;
@@ -846,6 +905,17 @@ real_vector3d *matrix4x3_transform_normal(
 	real j = normal->j;
 	real k = normal->k;
 
+#ifdef MATRIX_MATH_NEON
+	{
+		neon_real4 forward, left, up, position, transformed;
+
+		NEON_MATRIX_ROWS(matrix->n[0], forward, left, up, position);
+		(void)position;
+		transformed = i*forward + j*left + k*up;
+		NEON_STORE3(&result->i, transformed);
+		return result;
+	}
+#endif
 	result->i = i*matrix->forward.i + j*matrix->left.i + k*matrix->up.i;
 	result->j = i*matrix->forward.j + j*matrix->left.j + k*matrix->up.j;
 	result->k = i*matrix->forward.k + j*matrix->left.k + k*matrix->up.k;
@@ -936,6 +1006,33 @@ void matrix4x3_multiply(
 	real *result_elements = result->n[0];
 	real const *a_scale = &a->scale;
 
+#ifdef MATRIX_MATH_NEON
+	{
+		/* each row of the product is the rows of a weighted by a row of b
+		(a lane a column); every row is computed before any is stored, as
+		result may be a or b */
+		neon_real4 a0, a1, a2, a3, row0, row1, row2, row3;
+		/* b's twelve elements, four a register (the lanes each weight) */
+		neon_real4 b0 = *(neon_real4 const *)(b_elements + 0);
+		neon_real4 b1 = *(neon_real4 const *)(b_elements + 4);
+		neon_real4 b2 = *(neon_real4 const *)(b_elements + 8);
+		real scale = a->scale * b->scale;
+
+		NEON_MATRIX_ROWS(a_elements, a0, a1, a2, a3);
+		row0 = b0[0]*a0 + b0[1]*a1 + b0[2]*a2;
+		row1 = b0[3]*a0 + b1[0]*a1 + b1[1]*a2;
+		row2 = b1[2]*a0 + b1[3]*a1 + b2[0]*a2;
+		row3 = b2[1]*a0 + b2[2]*a1 + b2[3]*a2;
+		row3 = row3 * *a_scale + a3;
+		/* (each row's lane 3 is overwritten by the next row) */
+		*(neon_real4 *)(result_elements + 0) = row0;
+		*(neon_real4 *)(result_elements + 3) = row1;
+		*(neon_real4 *)(result_elements + 6) = row2;
+		NEON_STORE3(result_elements + 9, row3);
+		result->scale = scale;
+		return;
+	}
+#endif
 	{
 		/* the SSE block below: rows of b combine the rows of a, and the
 		position is scaled by a's scale before a's own is added */

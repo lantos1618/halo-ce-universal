@@ -17,7 +17,11 @@ ninja macos_perf_bench builds it; port/macos/tests/run_perf_bench.sh runs it.
   (port/linux/game/raytrace_world.c): each strip corner transformed, as it
   was, against each vertex transformed once;
 - the game's matrix maths and halo_ maths (the determinism test's
-  functions), to compare compiler flags (-O2 against -O3).
+  functions), to compare compiler flags (-O2 against -O3);
+- the game's matrix transforms and products, NEON's (source/math/
+  matrix_math.c) against the C they were, after checking the two alike on
+  millions of matrices and points (every exponent, zeros, denormals,
+  infinities and NaNs).
 
 Each line is the best of several runs, in nanoseconds per call (or per
 item).
@@ -505,6 +509,265 @@ static void bench_maths(void)
 		best_multiply, best_transform, best_inverse, best_transcendental);
 }
 
+/* ---------- the game's matrix maths: NEON against the C it replaced */
+
+vector3 *matrix4x3_transform_vector(const matrix4x3 *matrix, const vector3 *vector, vector3 *result);
+vector3 *matrix4x3_transform_normal(const matrix4x3 *matrix, const vector3 *normal, vector3 *result);
+
+/* source/math/matrix_math.c's C, as it was before its NEON (compiled with
+the game's flags: no fused multiply-add) */
+__attribute__((noinline)) static vector3 *c_transform_point(const matrix4x3 *matrix, const vector3 *point, vector3 *result)
+{
+	float x = point->x, y = point->y, z = point->z;
+
+	if (matrix->scale != 1.f)
+	{
+		x *= matrix->scale;
+		y *= matrix->scale;
+		z *= matrix->scale;
+	}
+	result->x = matrix->n[2][0]*z + matrix->n[1][0]*y + matrix->n[0][0]*x + matrix->n[3][0];
+	result->y = matrix->n[2][1]*z + matrix->n[1][1]*y + matrix->n[0][1]*x + matrix->n[3][1];
+	result->z = matrix->n[2][2]*z + matrix->n[1][2]*y + matrix->n[0][2]*x + matrix->n[3][2];
+	return result;
+}
+
+__attribute__((noinline)) static vector3 *c_transform_vector(const matrix4x3 *matrix, const vector3 *vector, vector3 *result)
+{
+	float i = vector->x, j = vector->y, k = vector->z;
+
+	if (matrix->scale != 1.f)
+	{
+		i *= matrix->scale;
+		j *= matrix->scale;
+		k *= matrix->scale;
+	}
+	result->x = i*matrix->n[0][0] + j*matrix->n[1][0] + k*matrix->n[2][0];
+	result->y = i*matrix->n[0][1] + j*matrix->n[1][1] + k*matrix->n[2][1];
+	result->z = i*matrix->n[0][2] + j*matrix->n[1][2] + k*matrix->n[2][2];
+	return result;
+}
+
+__attribute__((noinline)) static vector3 *c_transform_normal(const matrix4x3 *matrix, const vector3 *normal, vector3 *result)
+{
+	float i = normal->x, j = normal->y, k = normal->z;
+
+	result->x = i*matrix->n[0][0] + j*matrix->n[1][0] + k*matrix->n[2][0];
+	result->y = i*matrix->n[0][1] + j*matrix->n[1][1] + k*matrix->n[2][1];
+	result->z = i*matrix->n[0][2] + j*matrix->n[1][2] + k*matrix->n[2][2];
+	return result;
+}
+
+__attribute__((noinline)) static void c_multiply(const matrix4x3 *a, const matrix4x3 *b, matrix4x3 *result)
+{
+	const float *a_elements = a->n[0], *b_elements = b->n[0];
+	float product[12];
+	long row, column;
+
+	for (row = 0; row < 4; row++)
+	{
+		for (column = 0; column < 3; column++)
+		{
+			float value = b_elements[row * 3 + 0] * a_elements[column] +
+				b_elements[row * 3 + 1] * a_elements[3 + column] +
+				b_elements[row * 3 + 2] * a_elements[6 + column];
+
+			if (row == 3)
+				value = value * a->scale + a_elements[9 + column];
+			product[row * 3 + column] = value;
+		}
+	}
+	memcpy(result->n[0], product, sizeof(product));
+	result->scale = a->scale * b->scale;
+}
+
+/* any float: every exponent, both signs, zeros, denormals, infinities and
+(rarely) NaNs, or a value of a game's size */
+static float random_any_real(void)
+{
+	uint32_t kind = random_next() >> 24, bits = random_next();
+	float value;
+
+	if (kind < 128)
+		return random_real(-1000.0f, 1000.0f);
+	if (kind < 136)
+		return (kind & 1) ? 0.0f : -0.0f;
+	if (kind == 136)
+		bits = 0x7f800000u | (bits & 0x80000000u); /* infinity */
+	else if (kind == 137)
+		bits = 0x7fc00000u | (bits & 0x803fffffu); /* NaN */
+	else if (kind < 142)
+		bits &= 0x807fffffu; /* denormal */
+	else if ((bits & 0x7f800000u) == 0x7f800000u)
+		bits ^= 0x40000000u; /* no infinity or NaN here */
+	memcpy(&value, &bits, sizeof(value));
+	return value;
+}
+
+static void random_matrix(matrix4x3 *matrix, int kind)
+{
+	int index;
+
+	if (kind == 0)
+	{
+		/* as the game has them: a rotation, a position, a scale of 1 or not */
+		matrix4x3_rotation_from_angles(matrix, random_real(-3.2f, 3.2f), random_real(-1.6f, 1.6f),
+			random_real(-3.2f, 3.2f));
+		matrix->scale = (random_next() & 1) ? 1.0f : random_real(0.01f, 4.0f);
+		for (index = 0; index < 3; index++)
+			matrix->n[3][index] = random_real(-2000.0f, 2000.0f);
+		return;
+	}
+	matrix->scale = (random_next() & 3) ? random_any_real() : 1.0f;
+	for (index = 0; index < 12; index++)
+		matrix->n[0][index] = random_any_real();
+}
+
+/* NaNs alike when both are NaN: which NaN's payload a sum of two keeps is
+not the game's concern (and not what x86 and ARM agree on either) */
+static int same_reals(const float *a, const float *b, int count, long *nan_only)
+{
+	int index, different = 0, nans = 0;
+
+	for (index = 0; index < count; index++)
+	{
+		uint32_t x, y;
+
+		memcpy(&x, &a[index], 4);
+		memcpy(&y, &b[index], 4);
+		if (x == y)
+			continue;
+		if (a[index] != a[index] && b[index] != b[index])
+			nans = 1;
+		else
+			different = 1;
+	}
+	*nan_only += !different && nans;
+	return !different;
+}
+
+static void check_matrix_maths(void)
+{
+	static matrix4x3 matrices[257];
+	static vector3 points[256];
+	long checks = 0, different = 0, nan_only = 0, index;
+	double c_ns[4] = { 1e30, 1e30, 1e30, 1e30 }, neon_ns[4] = { 1e30, 1e30, 1e30, 1e30 };
+	int run, function;
+
+	for (index = 0; index < 4000000; index++)
+	{
+		matrix4x3 a, b, expected, got, aliased;
+		vector3 point, expected_point, got_point;
+
+		random_matrix(&a, (int)(index & 1));
+		random_matrix(&b, (int)((index >> 1) & 1));
+		point.x = (index & 4) ? random_any_real() : random_real(-100.0f, 100.0f);
+		point.y = (index & 4) ? random_any_real() : random_real(-100.0f, 100.0f);
+		point.z = (index & 4) ? random_any_real() : random_real(-100.0f, 100.0f);
+		switch (index % 5)
+		{
+		case 0:
+			c_multiply(&a, &b, &expected);
+			matrix4x3_multiply(&a, &b, &got);
+			different += !same_reals(&expected.scale, &got.scale, 13, &nan_only);
+			/* in place, as the game does (result the same as a, or as b) */
+			aliased = a;
+			matrix4x3_multiply(&aliased, &b, &aliased);
+			different += !same_reals(&expected.scale, &aliased.scale, 13, &nan_only);
+			aliased = b;
+			matrix4x3_multiply(&a, &aliased, &aliased);
+			different += !same_reals(&expected.scale, &aliased.scale, 13, &nan_only);
+			checks += 2;
+			break;
+		case 1:
+			c_transform_point(&a, &point, &expected_point);
+			matrix4x3_transform_point(&a, &point, &got_point);
+			different += !same_reals(&expected_point.x, &got_point.x, 3, &nan_only);
+			/* in place */
+			got_point = point;
+			matrix4x3_transform_point(&a, &got_point, &got_point);
+			different += !same_reals(&expected_point.x, &got_point.x, 3, &nan_only);
+			checks++;
+			break;
+		case 2:
+			c_transform_vector(&a, &point, &expected_point);
+			matrix4x3_transform_vector(&a, &point, &got_point);
+			different += !same_reals(&expected_point.x, &got_point.x, 3, &nan_only);
+			break;
+		default:
+			c_transform_normal(&a, &point, &expected_point);
+			matrix4x3_transform_normal(&a, &point, &got_point);
+			different += !same_reals(&expected_point.x, &got_point.x, 3, &nan_only);
+			break;
+		}
+		checks++;
+	}
+	failures += different != 0;
+	printf("matrix maths: %ld checks against the C, %ld different (%ld alike but for a NaN's payload)\n",
+		checks, different, nan_only);
+
+	for (index = 0; index < 257; index++)
+		random_matrix(&matrices[index], 0);
+	for (index = 0; index < 256; index++)
+	{
+		points[index].x = random_real(-100, 100);
+		points[index].y = random_real(-100, 100);
+		points[index].z = random_real(-100, 100);
+	}
+	for (run = 0; run < 9; run++)
+	{
+		for (function = 0; function < 4; function++)
+		{
+			int neon;
+
+			for (neon = 0; neon < 2; neon++)
+			{
+				double start = now_ns(), elapsed, total = 0;
+				int repeat;
+
+				for (repeat = 0; repeat < 200; repeat++)
+				{
+					for (index = 0; index < 256; index++)
+					{
+						const matrix4x3 *matrix = &matrices[index];
+						const vector3 *point = &points[(index + repeat) & 255];
+						matrix4x3 product;
+						vector3 out;
+
+						switch (function * 2 + neon)
+						{
+						case 0: c_multiply(matrix, matrix + 1, &product); total += product.n[3][0]; break;
+						case 1: matrix4x3_multiply(matrix, matrix + 1, &product); total += product.n[3][0]; break;
+						case 2: c_transform_point(matrix, point, &out); total += out.x; break;
+						case 3: matrix4x3_transform_point(matrix, point, &out); total += out.x; break;
+						case 4: c_transform_vector(matrix, point, &out); total += out.y; break;
+						case 5: matrix4x3_transform_vector(matrix, point, &out); total += out.y; break;
+						case 6: c_transform_normal(matrix, point, &out); total += out.z; break;
+						default: matrix4x3_transform_normal(matrix, point, &out); total += out.z; break;
+						}
+					}
+				}
+				elapsed = (now_ns() - start) / (200.0 * 256);
+				sink += (uint64_t)total;
+				if (neon)
+					neon_ns[function] = MIN_OF(neon_ns[function], elapsed);
+				else
+					c_ns[function] = MIN_OF(c_ns[function], elapsed);
+			}
+		}
+	}
+	{
+		static const char *names[4] = { "matrix4x3_multiply", "matrix4x3_transform_point",
+			"matrix4x3_transform_vector", "matrix4x3_transform_normal" };
+
+		for (function = 0; function < 4; function++)
+		{
+			printf("%-27s C %5.2f ns, the game's %5.2f ns (%.2fx)\n", names[function], c_ns[function],
+				neon_ns[function], c_ns[function] / neon_ns[function]);
+		}
+	}
+}
+
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -514,6 +777,7 @@ int main(int argc, char **argv)
 	bench_crc();
 	bench_skinning();
 	bench_maths();
+	check_matrix_maths();
 	printf("%s\n", failures ? "FAILED" : "ok");
 	return failures ? 1 : 0;
 }
