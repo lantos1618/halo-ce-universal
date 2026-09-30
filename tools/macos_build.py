@@ -630,14 +630,16 @@ def _generate_variant(n: Writer, sln: Any, config: Dict[str, Any], variant: str,
     n.build(outputs=target + "_math_test", rule="phony", inputs=[math_image, *math_staged])
 
     # the perf lab's microbenchmarks (port/macos/tests/perf_bench.c, docs/perf-lab.md):
-    # the guest's memory functions against musl's, skinning, the game's maths
+    # the guest's memory functions against musl's, the game's CRC, skinning,
+    # the game's maths
     if native:
         bench_stage = build / "perf_bench" / "Halo"
         bench_object = guest_object(PORT_DIR / "tests" / "perf_bench.c",
                                     f"{runtime_cflags} -fno-builtin -I{MUSL_DIR}/src/string")
         bench_image = bench_stage / "halo_guest.elf"
+        crc_object = next(o for o in objects if o.as_posix().endswith("source/memory/crc.o"))
         n.build(outputs=bench_image, rule="macos_guest_link",
-                inputs=[bench_object, matrix_object, *math_objects, *test_runtime],
+                inputs=[bench_object, matrix_object, crc_object, *math_objects, *test_runtime],
                 implicit=[libguestc, linker_script],
                 variables={"ldflags": f"-m aarch64linux -T {linker_script} --unresolved-symbols=ignore-all",
                            "libs": str(libguestc)})

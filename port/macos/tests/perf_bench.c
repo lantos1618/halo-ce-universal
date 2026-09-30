@@ -11,6 +11,8 @@ ninja macos_perf_bench builds it; port/macos/tests/run_perf_bench.sh runs it.
   draw with memcmp): the guest's (port/macos/guest/libc/string/
   memory_wide.c) against musl's portable C, which the guest used before,
   after checking that the two compute the same results;
+- the game's CRC (source/memory/crc.c, checkpoints' 16 MB game state)
+  against the byte table it had;
 - skinning a model the way the ray tracing's object meshes are made
   (port/linux/game/raytrace_world.c): each strip corner transformed, as it
   was, against each vertex transformed once;
@@ -242,6 +244,75 @@ static void bench_memory_functions(void)
 	}
 }
 
+/* ---------- the game's CRC (source/memory/crc.c) */
+
+void crc_checksum_buffer(unsigned long *crc_reference, void const *buffer, long buffer_size);
+
+/* crc.c's table, byte by byte, as the game computed it before the CRC32
+instructions */
+static unsigned long reference_crc(unsigned long crc, const unsigned char *bytes, long size)
+{
+	static unsigned long table[256];
+	long index;
+
+	if (!table[1])
+	{
+		for (index = 0; index < 256; index++)
+		{
+			unsigned long value = (unsigned long)index;
+			int bit;
+
+			for (bit = 0; bit < 8; bit++)
+				value = value & 1 ? (value >> 1) ^ 0xEDB88320UL : value >> 1;
+			table[index] = value;
+		}
+	}
+	for (index = 0; index < size; index++)
+		crc = table[(bytes[index] ^ crc) & 0xFF] ^ (crc >> 8);
+	return crc;
+}
+
+static void bench_crc(void)
+{
+	static unsigned char state[16 * 1024 * 1024];
+	long index, size, checks = 0, different = 0;
+	double start, table_ms = 1e30, instructions_ms = 1e30;
+	unsigned long table_crc = 0, instructions_crc = 0;
+	int run;
+
+	for (index = 0; index < (long)sizeof(state); index++)
+		state[index] = (unsigned char)(random_next() >> 13);
+	for (size = 0; size < 600; size++)
+	{
+		for (index = 0; index < 8; index++)
+		{
+			unsigned long crc = random_next();
+			unsigned long expected = reference_crc(crc, state + index * 1000 + size, size);
+
+			crc_checksum_buffer(&crc, state + index * 1000 + size, size);
+			different += crc != expected;
+			checks++;
+		}
+	}
+	for (run = 0; run < 3; run++)
+	{
+		unsigned long crc = 0xFFFFFFFFUL;
+
+		start = now_ns();
+		table_crc = reference_crc(0xFFFFFFFFUL, state, (long)sizeof(state));
+		table_ms = MIN_OF(table_ms, (now_ns() - start) / 1e6);
+		start = now_ns();
+		crc_checksum_buffer(&crc, state, (long)sizeof(state));
+		instructions_crc = crc;
+		instructions_ms = MIN_OF(instructions_ms, (now_ns() - start) / 1e6);
+	}
+	different += table_crc != instructions_crc;
+	failures += different != 0;
+	printf("crc_checksum_buffer: %ld checks against the table, %ld different; 16 MB (a checkpoint's game state) "
+		"%.1f ms by table, %.1f ms by the game's (%.1fx)\n", checks + 1, different, table_ms, instructions_ms,
+		table_ms / instructions_ms);
+}
+
 /* ---------- skinning, as raytrace_world.c's model_triangles */
 
 #define SKIN_NODES 40
@@ -440,6 +511,7 @@ int main(int argc, char **argv)
 	(void)argv;
 	check_memory_functions();
 	bench_memory_functions();
+	bench_crc();
 	bench_skinning();
 	bench_maths();
 	printf("%s\n", failures ? "FAILED" : "ok");

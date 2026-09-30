@@ -97,6 +97,30 @@ void crc_checksum_buffer(
 
 	match_assert("c:\\halo\\SOURCE\\memory\\crc.c", 42, buffer_size>=0);
 
+#if defined(HALO_MACOS) && defined(__ARM_FEATURE_CRC32)
+	/* ARMv8's CRC32 instructions compute this very CRC (the reflected
+	polynomial 0xEDB88320, the running value neither inverted nor
+	reflected), a byte or 8 bytes at a time, alike bit for bit: a
+	checkpoint's 16 MB game state in a few milliseconds rather than the
+	table's tens (docs/perf-lab.md, port/macos/tests/perf_bench.c) */
+	{
+		byte const *bytes = (byte const *)buffer;
+
+		crc = *crc_reference;
+		for (; buffer_size >= 8; buffer_size -= 8, bytes += 8)
+		{
+			unsigned long long word;
+
+			__builtin_memcpy(&word, bytes, sizeof(word));
+			crc = __builtin_arm_crc32d(crc, word);
+		}
+		for (; buffer_size > 0; buffer_size--, bytes++)
+			crc = __builtin_arm_crc32b(crc, *bytes);
+		*crc_reference = crc;
+		return;
+	}
+#endif
+
 	if (!crc_globals.initialized)
 	{
 		build_crc_table(crc_globals.table);
