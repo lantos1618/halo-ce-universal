@@ -77,6 +77,9 @@ symbols in this file:
 #include "saved games/game_state.h"
 /* port/linux/game/network_distributed.c's */
 void network_distributed_tick(void);
+/* port/linux/game/perf_stress.c's */
+void perf_tick_begin(void);
+void perf_tick_end(void);
 
 /* ---------- constants */
 
@@ -448,7 +451,10 @@ void game_time_update(
 
 					for (update_index = 0; update_index < server_updates; update_index++)
 					{
+						/* the perf lab's tick timing (port/linux/game/perf_stress.c) */
+						perf_tick_begin();
 						game_tick();
+						perf_tick_end();
 						render_interpolation_tick();
 						game_time_globals->server_time++;
 						game_time_globals->local_time++;

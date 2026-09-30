@@ -297,6 +297,11 @@ void game_initialize(
 	return;
 }
 
+/* the perf lab's tick timing (port/linux/game/perf_stress.c): the time
+since the last section ended goes to this one */
+void perf_tick_section(long section);
+#define PERF_TICK_SECTION(section) perf_tick_section(section)
+
 void game_tick(
 	void)
 {
@@ -314,18 +319,23 @@ void game_tick(
 
 	remove_quitting_players_from_game();
 	game_allegiance_update();
+	PERF_TICK_SECTION(4);
 	units_update();
+	PERF_TICK_SECTION(0);
 	/* (the host's actors drive the host's units, which a client of the
 	distributed netcode has from the host: its own would fight the host's
 	positions, and could place objects of their own) */
 	if (!network_game_distributed_client())
 		ai_update();
+	PERF_TICK_SECTION(1);
 	players_update_before_game();
 
 	seconds_per_tick = game_globals->players_are_double_speed
 		? 1.0f / (2 * TICKS_PER_SECOND)
 		: 1.0f / TICKS_PER_SECOND;
+	PERF_TICK_SECTION(4);
 	effects_update(seconds_per_tick);
+	PERF_TICK_SECTION(2);
 	lock_global_random_seed();
 	rumble_update();
 	first_person_weapons_update();
@@ -334,7 +344,9 @@ void game_tick(
 	editor_update();
 	hs_update();
 	recorded_animations_update();
+	PERF_TICK_SECTION(4);
 	objects_update();
+	PERF_TICK_SECTION(3);
 	players_update_after_game();
 	hud_update();
 	player_effect_update();

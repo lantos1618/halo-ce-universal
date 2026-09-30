@@ -212,6 +212,18 @@ static const struct config_setting config_settings[] =
 		"Console commands at times, for tests: \"<seconds>=<command>;...\" (seconds\n"
 		"since the game started), such as \"47=cheat_all_weapons;50=cheat_spawn_warthog\";\n"
 		"empty for none." },
+	{ "debug.stress", _config_string, "\"\"", "HALO_STRESS", _environment_value, _platform_all,
+		"The perf lab's stress test (docs/perf-lab.md): \"actors:<count>[:<step>[:<seconds>]]\"\n"
+		"places the level's AI characters around the player, <step> (16) every\n"
+		"<seconds> (5) up to <count>, logging the game ticks' time before each\n"
+		"step; \"bipeds:...\" their bodies without AI; empty for none." },
+	{ "debug.stress_start", _config_real, "20.0", "HALO_STRESS_START", _environment_value, _platform_all,
+		"Seconds into the level that debug.stress begins." },
+	{ "debug.tick_stats", _config_boolean, "false", "HALO_TICK_STATS", _environment_set_is_true, _platform_all,
+		"Log the game ticks' average and slowest time, by part (units, AI,\n"
+		"effects, objects), every debug.tick_stats_seconds." },
+	{ "debug.tick_stats_seconds", _config_real, "5.0", "HALO_TICK_STATS_SECONDS", _environment_value, _platform_all,
+		"How often debug.tick_stats logs." },
 	{ "debug.test_input", _config_string, "\"\"", "HALO_TEST_INPUT", _environment_value, _platform_all,
 		"\"bot:<seed>\" plays controller 1 with a scripted pattern (automated\n"
 		"network tests); \"look:<seed>\" stands still, only turning and looking\n"
