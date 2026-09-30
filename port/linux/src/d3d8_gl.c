@@ -374,6 +374,10 @@ vertices. */
 #ifdef HALO_GLES
 #define VISIBILITY_QUERY GL_ANY_SAMPLES_PASSED
 #define VISIBILITY_ALL_SAMPLES 1000000
+/* the queries of each result slot's latest tests, newest last: the game
+reads a test's result at the start of the next frame, while the GPU is still
+drawing the frame that made it */
+#define VISIBILITY_QUERY_RING 4
 #else
 #define VISIBILITY_QUERY GL_SAMPLES_PASSED
 #endif
@@ -442,6 +446,20 @@ struct gl_device
 	unsigned long counter_next;
 	unsigned long counter_active;
 	unsigned long counter_of_slot[VISIBILITY_TEST_SLOTS];
+	/* without them: each slot's latest queries (a ring), those not yet
+	read, and the latest result read. The game waits for a result at the
+	start of the next frame; waiting for the query stopped the CPU there
+	until the GPU had finished the frame before (on macOS, two thirds of
+	the main thread's time in a busy scene), so it gets the newest result
+	the GPU has finished instead, a frame or two old, as on the desktop */
+	struct
+	{
+		GLuint queries[VISIBILITY_QUERY_RING];
+		unsigned char newest;
+		unsigned char unread;
+		BOOL has_result;
+		GLuint result;
+	} query_rings[VISIBILITY_TEST_SLOTS];
 #else
 	/* each test's latest result, which the GPU writes (as a query buffer)
 	when the test's draws are done: the game waits for results at the start
@@ -1478,6 +1496,23 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	test's area (lens flares, rasterizer_lights.c), a split-screen window's
 	or the screen's alike */
 	device.query_area[index] = target_scale[0] * target_scale[1];
+#ifdef HALO_GLES
+	{
+		/* the ended query becomes the slot's newest; the ring's oldest,
+		read or long finished, is the next test's */
+		unsigned char next = (unsigned char)((device.query_rings[index].newest + 1) % VISIBILITY_QUERY_RING);
+
+		if (!device.query_rings[index].queries[next])
+			glGenQueries(1, &device.query_rings[index].queries[next]);
+		scratch = device.queries[0];
+		device.queries[0] = device.query_rings[index].queries[next];
+		device.query_rings[index].queries[next] = scratch;
+		device.query_rings[index].newest = next;
+		device.query_rings[index].unread |= (unsigned char)(1 << next);
+		device.query_pending[index] = TRUE;
+		return S_OK;
+	}
+#endif
 	/* swap the scratch query into the requested slot */
 	scratch = device.queries[0];
 	device.queries[0] = device.queries[index];
@@ -1538,6 +1573,40 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 		the GPU is still behind, from the slot's earlier ones */
 		if (result)
 			*result = visibility_unscaled(device.visibility_results[index], index);
+		return S_OK;
+	}
+#endif
+#ifdef HALO_GLES
+	{
+		/* the newest of the slot's tests the GPU has finished; the ones
+		before it are then of no use */
+		int age;
+
+		for (age = 0; age < VISIBILITY_QUERY_RING; age++)
+		{
+			int position = (device.query_rings[index].newest + VISIBILITY_QUERY_RING - age) % VISIBILITY_QUERY_RING;
+			int older;
+
+			if (!(device.query_rings[index].unread & (1 << position)))
+				continue;
+			glGetQueryObjectuiv(device.query_rings[index].queries[position], GL_QUERY_RESULT_AVAILABLE, &available);
+			if (!available)
+				continue;
+			glGetQueryObjectuiv(device.query_rings[index].queries[position], GL_QUERY_RESULT, &samples);
+			device.query_rings[index].result = samples ? VISIBILITY_ALL_SAMPLES : 0;
+			device.query_rings[index].has_result = TRUE;
+			for (older = age; older < VISIBILITY_QUERY_RING; older++)
+			{
+				device.query_rings[index].unread &= (unsigned char)~(1 <<
+					((device.query_rings[index].newest + VISIBILITY_QUERY_RING - older) % VISIBILITY_QUERY_RING));
+			}
+			break;
+		}
+		/* (until the slot's first test is done, the game waits for it) */
+		if (!device.query_rings[index].has_result)
+			return D3DERR_TESTINCOMPLETE;
+		if (result)
+			*result = device.query_rings[index].result;
 		return S_OK;
 	}
 #endif
