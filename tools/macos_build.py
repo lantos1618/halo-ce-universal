@@ -397,7 +397,7 @@ def _generate_variant(n: Writer, sln: Any, config: Dict[str, Any], variant: str,
     ]
     abi_flags = NATIVE_ABI_FLAGS if native else X86_ABI_FLAGS
     # configure.py --macos-optimize: the guest's optimisation level (-O2 by
-    # default; docs/perf-lab.md compares -O3)
+    # default; port/macos/README.md, "Perf lab")
     optimize = getattr(sln, "macos_optimize", None) or "O2"
     abi_flags = [f"-{optimize}" if flag == "-O2" else flag for flag in abi_flags]
     guest_abi = " ".join(abi_flags + (["-DHALO_RELEASE"] if release else []))
@@ -629,7 +629,7 @@ def _generate_variant(n: Writer, sln: Any, config: Dict[str, Any], variant: str,
         math_staged.append(math_stage / built.name)
     n.build(outputs=target + "_math_test", rule="phony", inputs=[math_image, *math_staged])
 
-    # the perf lab's microbenchmarks (port/macos/tests/perf_bench.c, docs/perf-lab.md):
+    # the perf lab's microbenchmarks (port/macos/tests/perf_bench.c):
     # the guest's memory functions against musl's, the game's CRC, skinning,
     # the game's maths
     if native:

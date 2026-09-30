@@ -250,6 +250,30 @@ code for the window, the mouse, the keyboard and the first start.
 - `display.render_scale = 0.75` (or F8 / ⌘R to 1440p or 1080p) draws fewer
   pixels, the largest speed-up on a Retina display.
 
+### Perf lab
+
+- `port/macos/tests/run_perf_bench.sh` (`ninja macos_perf_bench`) runs
+  [tests/perf_bench.c](tests/perf_bench.c) as a guest image, so it times
+  what the game runs: the guest's memory functions, the checkpoints' CRC,
+  the matrix maths and the renderer's NEON loops, each first checked
+  against the C it replaced (the same results, bit for bit).
+- `HALO_MAP=b30 HALO_PROFILE=1 tools/perf_lab/run_game.sh` runs the game
+  once for a measurement: not while another Halo runs, with the saves in a
+  folder of their own, no internet play, the window hidden, and an end
+  (`HALO_EXIT_AFTER`, 60 seconds). `tools/perf_lab/profile_summary.py
+  build/macos/Halo/profile.txt` sums up the profile: each busy thread's
+  hottest functions, and the guest's.
+- `HALO_TICK_STATS=1` logs the game ticks' average and slowest time, by
+  part (the AI, the effects, the objects). `HALO_STRESS=actors:160` fills
+  the level around the player with its own AI characters, 16 more every
+  5 seconds (`tools/perf_lab/stress_report.py` makes the log a table).
+- `python3 configure.py --macos-optimize O3` builds the guest with `-O3`,
+  to compare.
+- The native guest's SIMD (memory functions, the CRC's CRC32 instructions,
+  matrix transforms and products, index ranges) is only in the macOS
+  guest (`HALO_MACOS` with NEON); every other build keeps the C.
+  `port/macos/tests/run_determinism_test.sh` must keep its hashes.
+
 ## Find problems
 
 - `HALO_MAP=b30` starts a map without the menus: a campaign level's name

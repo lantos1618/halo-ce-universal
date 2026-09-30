@@ -102,7 +102,7 @@ void crc_checksum_buffer(
 	polynomial 0xEDB88320, the running value neither inverted nor
 	reflected), a byte or 8 bytes at a time, alike bit for bit: a
 	checkpoint's 16 MB game state in a few milliseconds rather than the
-	table's tens (docs/perf-lab.md, port/macos/tests/perf_bench.c) */
+	table's tens (port/macos/tests/perf_bench.c) */
 	{
 		byte const *bytes = (byte const *)buffer;
 

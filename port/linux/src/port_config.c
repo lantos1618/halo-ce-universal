@@ -213,7 +213,7 @@ static const struct config_setting config_settings[] =
 		"since the game started), such as \"47=cheat_all_weapons;50=cheat_spawn_warthog\";\n"
 		"empty for none." },
 	{ "debug.stress", _config_string, "\"\"", "HALO_STRESS", _environment_value, _platform_all,
-		"The perf lab's stress test (docs/perf-lab.md): \"actors:<count>[:<step>[:<seconds>]]\"\n"
+		"The perf lab's stress test (port/macos/README.md): \"actors:<count>[:<step>[:<seconds>]]\"\n"
 		"places the level's AI characters around the player, <step> (16) every\n"
 		"<seconds> (5) up to <count>, logging the game ticks' time before each\n"
 		"step; \"bipeds:...\" their bodies without AI; empty for none." },

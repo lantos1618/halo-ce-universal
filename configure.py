@@ -68,7 +68,7 @@ parser.add_argument(
     "--macos-optimize",
     choices=["O2", "O3"],
     default="O2",
-    help="macOS: the guest's optimisation level (default O2; docs/perf-lab.md)",
+    help="macOS: the guest's optimisation level (default O2; port/macos/README.md, Perf lab)",
 )
 parser.add_argument(
     "--android-ndk",

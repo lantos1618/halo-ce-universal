@@ -1,7 +1,7 @@
 /*
 PERF_BENCH.C
 
-Microbenchmarks for the perf lab (docs/perf-lab.md), run as a guest image
+Microbenchmarks for the perf lab (port/macos/README.md, "Perf lab"), run as a guest image
 of the native macOS build, so they time what the game runs: arm64_32 code,
 rebased (every memory access through x28), compiled with the game's flags.
 ninja macos_perf_bench builds it; port/macos/tests/run_perf_bench.sh runs it.

@@ -1,7 +1,7 @@
 /*
 PERF_STRESS.C
 
-The perf lab's stress test and tick timing (docs/perf-lab.md).
+The perf lab's stress test and tick timing (port/macos/README.md, "Perf lab").
 
 debug.tick_stats (HALO_TICK_STATS=1) times every game tick (game_time.c
 around game_tick) and the parts of it (game.c): the units, the AI, the

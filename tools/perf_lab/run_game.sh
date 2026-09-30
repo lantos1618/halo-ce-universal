@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs build/macos/Halo/halo (or $HALO_BIN) once for a measurement, with the
-# perf-lab's safe defaults (docs/perf-lab.md):
+# perf-lab's safe defaults (port/macos/README.md, "Perf lab"):
 #
 # - refuses to start while another Halo runs (someone may be playing, and
 #   two games would share the system link ports);
