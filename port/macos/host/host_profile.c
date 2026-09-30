@@ -297,6 +297,21 @@ void host_profile_write(void)
 			fprintf(file, "%6.2f%%  %8lu  %s %s\n", 100.0 * (double)buckets[index].samples / (double)total_samples,
 				buckets[index].samples, buckets[index].guest ? "guest" : "host ", buckets[index].name);
 		}
+		/* the game's own functions further down than the lists above reach:
+		its time is spread over many (tools/perf_lab/profile_summary.py) */
+		{
+			int shown = 0;
+
+			fprintf(file, "\nguest functions:\n");
+			for (index = 0; index < bucket_count && shown < 200; index++)
+			{
+				if (!buckets[index].guest)
+					continue;
+				fprintf(file, "%6.2f%%  %8lu  guest %s\n", 100.0 * (double)buckets[index].samples / (double)total_samples,
+					buckets[index].samples, buckets[index].name);
+				shown++;
+			}
+		}
 		for (thread = 0; thread < known_thread_count; thread++)
 		{
 			int shown = 0;

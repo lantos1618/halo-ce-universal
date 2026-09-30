@@ -22,17 +22,24 @@ def main():
     top = int(sys.argv[2]) if len(sys.argv) > 2 else 12
     threads = {}
     totals = {}
+    listed = {}
     thread = None
+    in_guest_list = False
     for line in open(path, encoding="utf-8", errors="replace"):
+        if line.startswith("guest functions:"):
+            in_guest_list = True
+            continue
         match = re.match(r"thread (\d+) \((\d+) samples\)", line)
         if match:
+            in_guest_list = False
             thread = int(match.group(1))
             threads[thread] = (int(match.group(2)), [])
             continue
-        if thread is None:
-            continue
         match = re.match(r"\s*([\d.]+)%\s+(\d+)\s+(host|guest)\s+(.*)", line)
-        if not match:
+        if match and in_guest_list:
+            listed[match.group(4).strip()] = int(match.group(2))
+            continue
+        if thread is None or not match:
             continue
         samples, side, name = int(match.group(2)), match.group(3), match.group(4).strip()
         if any(word in name for word in IDLE):
@@ -48,6 +55,9 @@ def main():
         print("thread %d: %d of %d samples busy (%.1f%%)" % (thread, busy, count, 100.0 * busy / count))
         for samples, side, name in rows[:top]:
             print("  %6d %5.1f%%  %-5s %s" % (samples, 100.0 * samples / count, side, name[:90]))
+    # (the profile's own list of the guest's functions, which goes further
+    # than each thread's, when it has one)
+    totals = listed or totals
     print("guest functions, every thread:")
     for name, samples in sorted(totals.items(), key=lambda item: -item[1])[:top * 2]:
         print("  %6d  %s" % (samples, name))
