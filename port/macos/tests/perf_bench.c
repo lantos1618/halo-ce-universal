@@ -21,7 +21,10 @@ ninja macos_perf_bench builds it; port/macos/tests/run_perf_bench.sh runs it.
 - the game's matrix transforms and products, NEON's (source/math/
   matrix_math.c) against the C they were, after checking the two alike on
   millions of matrices and points (every exponent, zeros, denormals,
-  infinities and NaNs).
+  infinities and NaNs);
+- the renderer's loops the guest runs with NEON (port/linux/src/
+  d3d8_simd.h: an indexed draw's smallest and largest index) against the
+  C, checked alike first.
 
 Each line is the best of several runs, in nanoseconds per call (or per
 item).
@@ -768,6 +771,89 @@ static void check_matrix_maths(void)
 	}
 }
 
+/* ---------- the renderer's loops (port/linux/src/d3d8_simd.h) */
+
+/* the game's, as the macOS guest has them (NEON), and the C, which the
+other ports compile and which the guest had */
+#define D3D8_SIMD_SCALAR
+#define d3d8_index_extent c_index_extent
+#include "../../linux/src/d3d8_simd.h"
+#undef d3d8_index_extent
+#undef D3D8_SIMD_SCALAR
+#undef __D3D8_SIMD_H
+#include "../../linux/src/d3d8_simd.h"
+
+typedef void (*extent_function)(const unsigned short *, unsigned long, unsigned long *, unsigned long *);
+
+static void bench_index_extent(void)
+{
+	/* the draws' index counts: a sprite's quad to a level section's strips */
+	static const unsigned long sizes[] = { 4, 6, 14, 36, 120, 400, 1500, 6000 };
+	static unsigned short indices[8192];
+	static volatile extent_function functions[2] = { c_index_extent, d3d8_index_extent };
+	long checks = 0, different = 0;
+	unsigned long size, offset, index;
+
+	for (index = 0; index < 8192; index++)
+		indices[index] = (unsigned short)(random_next() >> 16);
+	/* every count to 600 at every offset to 16, and runs of ascending
+	indices (the smallest and the largest at the ends) */
+	for (size = 0; size <= 600; size++)
+	{
+		for (offset = 0; offset < 16; offset++)
+		{
+			unsigned long c_low, c_high, low, high;
+			unsigned short saved[2];
+
+			c_index_extent(indices + offset, size, &c_low, &c_high);
+			d3d8_index_extent(indices + offset, size, &low, &high);
+			different += c_low != low || c_high != high;
+			checks++;
+			if (size < 2)
+				continue;
+			saved[0] = indices[offset];
+			saved[1] = indices[offset + size - 1];
+			indices[offset] = (unsigned short)offset;
+			indices[offset + size - 1] = (unsigned short)(0xfff0 + offset);
+			c_index_extent(indices + offset, size, &c_low, &c_high);
+			d3d8_index_extent(indices + offset, size, &low, &high);
+			different += c_low != low || c_high != high;
+			checks++;
+			indices[offset] = saved[0];
+			indices[offset + size - 1] = saved[1];
+		}
+	}
+	failures += different != 0;
+	printf("index extent: %ld checks against the C, %ld different\n", checks, different);
+	printf("function         indices       C ns    game ns speedup\n");
+	for (size = 0; size < sizeof(sizes) / sizeof(sizes[0]); size++)
+	{
+		double best[2] = { 1e30, 1e30 };
+		long repeats = 4000000 / (long)(sizes[size] + 16);
+		int run, which;
+
+		for (run = 0; run < 7; run++)
+		{
+			for (which = 0; which < 2; which++)
+			{
+				extent_function function = functions[which];
+				unsigned long low = 0, high = 0, total = 0;
+				double start = now_ns();
+				long repeat;
+
+				for (repeat = 0; repeat < repeats; repeat++)
+				{
+					function(indices + (repeat & 15), sizes[size], &low, &high);
+					total += low + high;
+				}
+				best[which] = MIN_OF(best[which], (now_ns() - start) / (double)repeats);
+				sink += total;
+			}
+		}
+		printf("index_extent  %10lu %10.1f %10.1f %6.1fx\n", sizes[size], best[0], best[1], best[0] / best[1]);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -778,6 +864,7 @@ int main(int argc, char **argv)
 	bench_skinning();
 	bench_maths();
 	check_matrix_maths();
+	bench_index_extent();
 	printf("%s\n", failures ? "FAILED" : "ok");
 	return failures ? 1 : 0;
 }

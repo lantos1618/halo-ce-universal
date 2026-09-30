@@ -25,6 +25,7 @@ Conventions carried over from the Xbox:
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
 #include "port_config.h"
+#include "d3d8_simd.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -3151,7 +3152,7 @@ static void index_extent(const WORD *indices, unsigned long count, unsigned long
 	unsigned long *minimum, unsigned long *maximum)
 {
 	unsigned long slot = (((unsigned long)indices >> 1) ^ (count * 2654435761UL)) % INDEX_RANGE_SLOTS;
-	unsigned long index, low = 0xffff, high = 0;
+	unsigned long low, high;
 
 	if (cached && index_ranges[slot].address == (unsigned long)indices && index_ranges[slot].count == count &&
 		index_ranges[slot].generation == generation)
@@ -3160,13 +3161,8 @@ static void index_extent(const WORD *indices, unsigned long count, unsigned long
 		*maximum = index_ranges[slot].maximum;
 		return;
 	}
-	for (index = 0; index < count; index++)
-	{
-		if (indices[index] < low)
-			low = indices[index];
-		if (indices[index] > high)
-			high = indices[index];
-	}
+	/* (eight at a time on the macOS guest: d3d8_simd.h) */
+	d3d8_index_extent(indices, count, &low, &high);
 	if (cached)
 	{
 		index_ranges[slot].address = (unsigned long)indices;
