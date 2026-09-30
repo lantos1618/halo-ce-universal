@@ -65,6 +65,12 @@ parser.add_argument(
     help="profile-guided optimisation from this profile instead",
 )
 parser.add_argument(
+    "--macos-optimize",
+    choices=["O2", "O3"],
+    default="O2",
+    help="macOS: the guest's optimisation level (default O2; docs/perf-lab.md)",
+)
+parser.add_argument(
     "--android-ndk",
     type=str,
     help="Android NDK for `ninja android` (default: ANDROID_NDK_HOME, or the newest under the Android SDK)",
@@ -95,6 +101,7 @@ sln = SimpleNamespace(
     android_ndk=args.android_ndk,
     android_guest_cc=args.android_guest_cc,
     macos_angle=args.macos_angle,
+    macos_optimize=args.macos_optimize,
 )
 
 

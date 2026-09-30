@@ -392,6 +392,10 @@ def _generate_variant(n: Writer, sln: Any, config: Dict[str, Any], variant: str,
         f"-isystem {MUSL_DIR}/include",
     ]
     abi_flags = NATIVE_ABI_FLAGS if native else X86_ABI_FLAGS
+    # configure.py --macos-optimize: the guest's optimisation level (-O2 by
+    # default; docs/perf-lab.md compares -O3)
+    optimize = getattr(sln, "macos_optimize", None) or "O2"
+    abi_flags = [f"-{optimize}" if flag == "-O2" else flag for flag in abi_flags]
     guest_abi = " ".join(abi_flags + (["-DHALO_RELEASE"] if release else []))
     guest_code = " ".join(GUEST_CODE_FLAGS)
     tool_implicit = list(generated_headers)
@@ -610,4 +614,22 @@ def _generate_variant(n: Writer, sln: Any, config: Dict[str, Any], variant: str,
         n.build(outputs=math_stage / built.name, rule="macos_copy", inputs=built)
         math_staged.append(math_stage / built.name)
     n.build(outputs=target + "_math_test", rule="phony", inputs=[math_image, *math_staged])
+
+    # the perf lab's microbenchmarks (port/macos/tests/perf_bench.c, docs/perf-lab.md):
+    # the guest's memory functions against musl's, skinning, the game's maths
+    if native:
+        bench_stage = build / "perf_bench" / "Halo"
+        bench_object = guest_object(PORT_DIR / "tests" / "perf_bench.c",
+                                    f"{runtime_cflags} -fno-builtin -I{MUSL_DIR}/src/string")
+        bench_image = bench_stage / "halo_guest.elf"
+        n.build(outputs=bench_image, rule="macos_guest_link",
+                inputs=[bench_object, matrix_object, *math_objects, *test_runtime],
+                implicit=[libguestc, linker_script],
+                variables={"ldflags": f"-m aarch64linux -T {linker_script} --unresolved-symbols=ignore-all",
+                           "libs": str(libguestc)})
+        bench_staged = []
+        for built in (host_executable, *staged):
+            n.build(outputs=bench_stage / built.name, rule="macos_copy", inputs=built)
+            bench_staged.append(bench_stage / built.name)
+        n.build(outputs=target + "_perf_bench", rule="phony", inputs=[bench_image, *bench_staged])
 
